@@ -1,0 +1,41 @@
+name: Build Gemini iOS 15 IPA
+
+on:
+  push:
+    branches: [ "main", "master" ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-13
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v3
+
+      - name: Select Xcode
+        run: sudo xcode-select -s /Applications/Xcode_14.3.1.app
+
+      - name: Build App
+        run: |
+          xcodebuild clean build \
+            -project Gemini.xcodeproj \
+            -scheme Gemini \
+            -configuration Release \
+            -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            CODE_SIGN_IDENTITY="" \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGNING_ALLOWED=NO \
+            CONFIGURATION_BUILD_DIR=build
+
+      - name: Package IPA
+        run: |
+          mkdir -p Payload
+          cp -r build/Gemini.app Payload/
+          zip -r Gemini_Native_iOS15.ipa Payload
+
+      - name: Upload IPA Artifact
+        uses: actions/upload-artifact@v3
+        with:
+          name: Gemini_Native_iOS15
+          path: Gemini_Native_iOS15.ipa
