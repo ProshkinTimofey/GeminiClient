@@ -20,6 +20,28 @@ public struct ConversationContext: Codable, Sendable, Equatable {
     }
 }
 
+public enum GeminiModel: String, CaseIterable, Codable, Sendable {
+    case flash = "gemini-2.0-flash"
+    case pro = "gemini-2.0-pro"
+    case flashLite = "gemini-2.0-flash-lite"
+
+    public var title: String {
+        switch self {
+        case .flash: return "Gemini 2.5 Flash"
+        case .pro: return "Gemini 2.5 Pro"
+        case .flashLite: return "Flash-Lite"
+        }
+    }
+
+    public var shortBadge: String {
+        switch self {
+        case .flash: return "Flash ⚡️"
+        case .pro: return "Pro 🧠"
+        case .flashLite: return "Lite 🚀"
+        }
+    }
+}
+
 public struct ChatThreadSummary: Identifiable, Codable, Sendable, Equatable {
     public let id: String
     public let title: String
@@ -58,15 +80,15 @@ public enum GeminiRPCError: LocalizedError, Sendable {
     public var errorDescription: String? {
         switch self {
         case .sessionExpired:
-            return "Сессия Google истекла. Требуется повторный вход в аккаунт."
+            return "Сессия Google Gemini истекла. Требуется повторный вход."
         case .handshakeFailed(let reason):
-            return "Ошибка рукопожатия с Gemini: \(reason)"
+            return "Не удалось инициализировать сессию (Handshake): \(reason)"
         case .invalidResponse(let statusCode):
-            return "Неверный HTTP-ответ сервера (код: \(statusCode))."
+            return "Некорректный HTTP-ответ сервера Google: \(statusCode)"
         case .payloadEncodingFailed:
-            return "Не удалось сформировать RPC-пакет batchexecute."
+            return "Ошибка сериализации параметров запроса."
         case .parsingFailed(let details):
-            return "Ошибка разбора ответа Google: \(details)"
+            return "Ошибка парсинга RPC-ответа: \(details)"
         case .emptyReply:
             return "Gemini вернул пустой ответ."
         case .networkError(let details):
@@ -87,6 +109,8 @@ public extension Collection {
 
 public struct BardResponseParser: Sendable {
     
+    /// Надежный извлекатель вложенных JSON-пейлоадов из формата Google (wrb.fr).
+    /// Не разбивает строки по переносу строки `\n`, сохраняя многострочный код и форматирование целиком.
     public static func extractPayloads(from responseString: String) throws -> [[Any]] {
         var cleanString = responseString.trimmingCharacters(in: .whitespacesAndNewlines)
         
@@ -95,36 +119,78 @@ public struct BardResponseParser: Sendable {
         }
 
         var results: [[Any]] = []
-        let lines = cleanString.components(separatedBy: "\n")
+        var searchIndex = cleanString.startIndex
 
-        for line in lines {
-            let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard trimmed.hasPrefix("[") && trimmed.hasSuffix("]") else { continue }
+        while searchIndex < cleanString.endIndex,
+              let range = cleanString[searchIndex...].range(of: "[[\"wrb.fr\"") {
+            let chunkStart = range.lowerBound
+            var bracketCount = 0
+            var inString = false
+            var escape = false
+            var chunkEnd = chunkStart
             
-            guard let data = trimmed.data(using: .utf8),
-                  let outerArray = try? JSONSerialization.jsonObject(with: data) as? [Any] else {
-                continue
-            }
-
-            for item in outerArray {
-                guard let block = item as? [Any],
-                      let tag = block[safe: 0] as? String, tag == "wrb.fr",
-                      let jsonString = block[safe: 2] as? String,
-                      let innerData = jsonString.data(using: .utf8),
-                      let innerArray = try? JSONSerialization.jsonObject(with: innerData) as? [Any] else {
-                    continue
+            var curr = chunkStart
+            while curr < cleanString.endIndex {
+                let char = cleanString[curr]
+                if escape {
+                    escape = false
+                } else if char == "\\" {
+                    escape = true
+                } else if char == "\"" {
+                    inString.toggle()
+                } else if !inString {
+                    if char == "[" {
+                        bracketCount += 1
+                    } else if char == "]" {
+                        bracketCount -= 1
+                        if bracketCount == 0 {
+                            chunkEnd = cleanString.index(after: curr)
+                            break
+                        }
+                    }
                 }
-                results.append(innerArray)
+                curr = cleanString.index(after: curr)
             }
+            
+            if bracketCount == 0 {
+                let jsonSubstring = String(cleanString[chunkStart..<chunkEnd])
+                if let data = jsonSubstring.data(using: .utf8),
+                   let outerArray = try? JSONSerialization.jsonObject(with: data, options: [.fragmentsAllowed]) as? [Any] {
+                    for item in outerArray {
+                        if let block = item as? [Any],
+                           let tag = block[safe: 0] as? String, tag == "wrb.fr",
+                           let jsonString = block[safe: 2] as? String,
+                           let innerData = jsonString.data(using: .utf8),
+                           let innerArray = try? JSONSerialization.jsonObject(with: innerData, options: [.fragmentsAllowed]) as? [Any] {
+                            results.append(innerArray)
+                        }
+                    }
+                }
+                searchIndex = chunkEnd
+            } else {
+                searchIndex = cleanString.index(after: chunkStart)
+            }
+        }
+        
+        // Резервный фолбэк для обычных JSON-ответов
+        if results.isEmpty, let data = cleanString.data(using: .utf8),
+           let directArray = try? JSONSerialization.jsonObject(with: data, options: [.fragmentsAllowed]) as? [Any] {
+            results.append(directArray)
         }
 
         return results
     }
 
+    /// Парсинг ответа генерации StreamGenerate.
+    /// Перебирает все чанки с конца (в стриме финальный и полный ответ находится в самом последнем чанке),
+    /// и объединяет все текстовые фрагменты кандидата, исключая обрезку до одного слова.
     public static func parseGenerateResponse(from responseString: String) throws -> (reply: String, newContext: ConversationContext) {
         let payloads = try extractPayloads(from: responseString)
         
-        for payload in payloads {
+        var bestReply: String = ""
+        var bestContext = ConversationContext.empty
+
+        for payload in payloads.reversed() {
             let metaBlock = payload[safe: 1] as? [Any]
             let convId = (metaBlock?[safe: 0] as? String) ?? ""
             let respId = (metaBlock?[safe: 1] as? String) ?? ""
@@ -136,32 +202,58 @@ public struct BardResponseParser: Sendable {
 
             let choiceId = (firstCandidate[safe: 0] as? String) ?? ""
             
-            if let textParts = firstCandidate[safe: 1] as? [Any],
-               let text = textParts[safe: 0] as? String, !text.isEmpty {
-                let context = ConversationContext(conversationId: convId, responseId: respId, choiceId: choiceId)
-                return (reply: text, newContext: context)
+            var fullText = ""
+            if let textParts = firstCandidate[safe: 1] as? [Any] {
+                let parts = textParts.compactMap { part -> String? in
+                    if let s = part as? String { return s }
+                    if let arr = part as? [Any], let s = arr[safe: 0] as? String { return s }
+                    return nil
+                }
+                fullText = parts.joined()
             }
+
+            if !fullText.isEmpty && fullText.count > bestReply.count {
+                bestReply = fullText
+                bestContext = ConversationContext(conversationId: convId, responseId: respId, choiceId: choiceId)
+            }
+        }
+
+        if !bestReply.isEmpty {
+            return (reply: bestReply, newContext: bestContext)
         }
 
         throw GeminiRPCError.emptyReply
     }
 
+    /// Парсинг истории чатов из RPC MaZiqc
     public static func parseChatHistory(from responseString: String) throws -> [ChatThreadSummary] {
         let payloads = try extractPayloads(from: responseString)
         var threads: [ChatThreadSummary] = []
 
         for payload in payloads {
-            guard let threadList = payload[safe: 0] as? [Any] else { continue }
+            var candidateLists: [[Any]] = []
+            if let first = payload[safe: 0] as? [Any], first[safe: 0] is [Any] {
+                if let list = payload[safe: 0] as? [[Any]] {
+                    candidateLists.append(contentsOf: list)
+                }
+            } else if payload[safe: 0] is [Any] {
+                for item in payload {
+                    if let threadData = item as? [Any] {
+                        candidateLists.append(threadData)
+                    }
+                }
+            }
 
-            for item in threadList {
-                guard let threadData = item as? [Any],
-                      let id = threadData[safe: 0] as? String,
+            for threadData in candidateLists {
+                guard let id = threadData[safe: 0] as? String,
                       let title = threadData[safe: 1] as? String else {
                     continue
                 }
 
                 var date = Date()
                 if let rawTime = threadData[safe: 2] as? Double {
+                    date = Date(timeIntervalSince1970: rawTime > 10_000_000_000 ? rawTime / 1000.0 : rawTime)
+                } else if let rawTimeStr = threadData[safe: 2] as? String, let rawTime = Double(rawTimeStr) {
                     date = Date(timeIntervalSince1970: rawTime > 10_000_000_000 ? rawTime / 1000.0 : rawTime)
                 }
 
@@ -172,6 +264,7 @@ public struct BardResponseParser: Sendable {
         return threads
     }
 
+    /// Парсинг сообщений конкретного треда из RPC hNvQHb
     public static func parseThreadDetails(from responseString: String) throws -> ([ChatMessage], ConversationContext) {
         let payloads = try extractPayloads(from: responseString)
         var messages: [ChatMessage] = []
@@ -181,7 +274,9 @@ public struct BardResponseParser: Sendable {
             let metaBlock = payload[safe: 1] as? [Any]
             let convId = (metaBlock?[safe: 0] as? String) ?? ""
             let respId = (metaBlock?[safe: 1] as? String) ?? ""
-            context = ConversationContext(conversationId: convId, responseId: respId, choiceId: "")
+            if !convId.isEmpty {
+                context = ConversationContext(conversationId: convId, responseId: respId, choiceId: "")
+            }
 
             guard let turns = payload[safe: 0] as? [Any] else { continue }
 
@@ -195,9 +290,16 @@ public struct BardResponseParser: Sendable {
 
                 if let modelResponses = turnArray[safe: 1] as? [Any],
                    let firstModelResp = modelResponses[safe: 0] as? [Any],
-                   let textBlock = firstModelResp[safe: 1] as? [Any],
-                   let modelText = textBlock[safe: 0] as? String {
-                    messages.append(ChatMessage(text: modelText, isUser: false))
+                   let textBlock = firstModelResp[safe: 1] as? [Any] {
+                    let parts = textBlock.compactMap { part -> String? in
+                        if let s = part as? String { return s }
+                        if let arr = part as? [Any], let s = arr[safe: 0] as? String { return s }
+                        return nil
+                    }
+                    let modelText = parts.joined()
+                    if !modelText.isEmpty {
+                        messages.append(ChatMessage(text: modelText, isUser: false))
+                    }
                 }
             }
         }
@@ -223,12 +325,18 @@ public actor GeminiRPCClient {
     private var blVersion: String = "boq_assistant-bard-web-server_20240319.08_p0"
     private var reqIdCounter: Int = 100000
 
+    public var currentModel: GeminiModel = .flash
+
+    public func setModel(_ model: GeminiModel) {
+        self.currentModel = model
+    }
+
     public init(authStore: KeychainAuthStore = .shared) {
         self.authStore = authStore
         
         let config = URLSessionConfiguration.default
-        config.timeoutIntervalForRequest = 30.0
-        config.timeoutIntervalForResource = 60.0
+        config.timeoutIntervalForRequest = 45.0
+        config.timeoutIntervalForResource = 90.0
         config.httpShouldSetCookies = true
         config.httpCookieAcceptPolicy = .always
         
@@ -275,7 +383,7 @@ public actor GeminiRPCClient {
         }
     }
 
-    public func fetchChatHistory(limit: Int = 30) async throws -> [ChatThreadSummary] {
+    public func fetchChatHistory(limit: Int = 50) async throws -> [ChatThreadSummary] {
         try await ensureHandshake()
 
         let payload: [Any] = [limit, 2, NSNull(), 1]
@@ -428,8 +536,6 @@ public actor GeminiRPCClient {
         request.setValue("https://gemini.google.com/", forHTTPHeaderField: "Referer")
         request.setValue("1", forHTTPHeaderField: "X-Same-Domain")
         request.setValue("application/x-www-form-urlencoded;charset=utf-8", forHTTPHeaderField: "Content-Type")
-        request.setValue("gzip, deflate, br", forHTTPHeaderField: "Accept-Encoding")
-        request.setValue("*/*", forHTTPHeaderField: "Accept")
     }
 
     private func nextReqId() -> Int {
@@ -438,24 +544,19 @@ public actor GeminiRPCClient {
     }
 
     private func encodeFormBody(_ parameters: [String: String]) -> Data {
-        let allowed = CharacterSet(charactersIn: "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-._~")
-        let postDataString = parameters.map { key, value in
-            let escapedKey = key.addingPercentEncoding(withAllowedCharacters: allowed) ?? key
-            let escapedValue = value.addingPercentEncoding(withAllowedCharacters: allowed) ?? value
+        let parameterArray = parameters.map { key, value in
+            let escapedKey = key.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? key
+            let escapedValue = value.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? value
             return "\(escapedKey)=\(escapedValue)"
-        }.joined(separator: "&")
-
-        return postDataString.data(using: .utf8) ?? Data()
+        }
+        return parameterArray.joined(separator: "&").data(using: .utf8) ?? Data()
     }
 
-    private func extractRegex(pattern: String, from string: String) -> String? {
-        guard let regex = try? NSRegularExpression(pattern: pattern) else { return nil }
-        let nsRange = NSRange(string.startIndex..<string.endIndex, in: string)
-        guard let match = regex.firstMatch(in: string, options: [], range: nsRange),
-              match.numberOfRanges > 1,
-              let range = Range(match.range(at: 1), in: string) else {
-            return nil
-        }
-        return String(string[range])
+    private func extractRegex(pattern: String, from text: String) -> String? {
+        guard let regex = try? NSRegularExpression(pattern: pattern, options: []) else { return nil }
+        let range = NSRange(text.startIndex..<text.endIndex, in: text)
+        guard let match = regex.firstMatch(in: text, options: [], range: range) else { return nil }
+        guard let captureRange = Range(match.range(at: 1), in: text) else { return nil }
+        return String(text[captureRange])
     }
 }

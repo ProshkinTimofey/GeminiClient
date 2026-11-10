@@ -9,8 +9,17 @@ public final class ChatViewController: UIViewController, UITableViewDataSource, 
     private var messages: [ChatMessage] = []
     private var currentContext: ConversationContext = .empty
     private var isGenerating: Bool = false
+    private var selectedModel: GeminiModel = .flash
 
     private var inputBarBottomConstraint: NSLayoutConstraint!
+
+    private lazy var modelPickerButton: UIButton = {
+        let btn = UIButton(type: .system)
+        btn.titleLabel?.font = .systemFont(ofSize: 15, weight: .bold)
+        btn.setTitleColor(.label, for: .normal)
+        btn.addTarget(self, action: #selector(handleModelPickerTapped), for: .touchUpInside)
+        return btn
+    }()
 
     private lazy var tableView: UITableView = {
         let tv = UITableView(frame: .zero, style: .plain)
@@ -36,7 +45,7 @@ public final class ChatViewController: UIViewController, UITableViewDataSource, 
 
     private let typingIndicatorLabel: UILabel = {
         let label = UILabel()
-        label.text = "Gemini думает..."
+        label.text = "Gemini генерирует ответ..."
         label.font = .italicSystemFont(ofSize: 12)
         label.textColor = .secondaryLabel
         label.isHidden = true
@@ -64,9 +73,16 @@ public final class ChatViewController: UIViewController, UITableViewDataSource, 
         tableView.reloadData()
     }
 
+    private func updateModelButtonTitle() {
+        modelPickerButton.setTitle("Gemini \(selectedModel.shortBadge) ▾", for: .normal)
+        modelPickerButton.sizeToFit()
+    }
+
     private func setupNavigationBar() {
-        title = "Gemini"
         view.backgroundColor = .systemBackground
+
+        updateModelButtonTitle()
+        navigationItem.titleView = modelPickerButton
 
         let sidebarConfig = UIImage.SymbolConfiguration(pointSize: 16, weight: .semibold)
         let sidebarImage = UIImage(systemName: "sidebar.left", withConfiguration: sidebarConfig)
@@ -76,6 +92,45 @@ public final class ChatViewController: UIViewController, UITableViewDataSource, 
             target: self,
             action: #selector(handleHamburger)
         )
+
+        let newChatConfig = UIImage.SymbolConfiguration(pointSize: 16, weight: .semibold)
+        let newChatImage = UIImage(systemName: "square.and.pencil", withConfiguration: newChatConfig)
+        navigationItem.rightBarButtonItem = UIBarButtonItem(
+            image: newChatImage,
+            style: .plain,
+            target: self,
+            action: #selector(handleNewChatTapped)
+        )
+    }
+
+    @objc private func handleNewChatTapped() {
+        resetChat()
+    }
+
+    @objc private func handleModelPickerTapped() {
+        let alert = UIAlertController(title: "Модель Gemini", message: "Выберите модель для общения", preferredStyle: .actionSheet)
+        
+        for model in GeminiModel.allCases {
+            let isCurrent = model == selectedModel
+            let title = "\(isCurrent ? "✓ " : "")\(model.title)"
+            alert.addAction(UIAlertAction(title: title, style: .default, handler: { [weak self] _ in
+                guard let self = self else { return }
+                self.selectedModel = model
+                self.updateModelButtonTitle()
+                Task {
+                    await self.client.setModel(model)
+                }
+            }))
+        }
+        
+        alert.addAction(UIAlertAction(title: "Отмена", style: .cancel, handler: nil))
+
+        if let popover = alert.popoverPresentationController {
+            popover.sourceView = modelPickerButton
+            popover.sourceRect = modelPickerButton.bounds
+        }
+
+        present(alert, animated: true)
     }
 
     @objc private func handleHamburger() {
