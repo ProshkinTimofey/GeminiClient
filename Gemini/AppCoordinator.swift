@@ -72,11 +72,14 @@ public final class AppCoordinator {
     }
 
     private func presentAuthFlow(animated: Bool) {
-        guard let presenter = window.rootViewController ?? UIViewController() else { return }
-        
-        if window.rootViewController == nil {
-            window.rootViewController = presenter
+        let presenter: UIViewController
+        if let root = window.rootViewController {
+            presenter = root
+        } else {
+            let fallback = UIViewController()
+            window.rootViewController = fallback
             window.makeKeyAndVisible()
+            presenter = fallback
         }
 
         Task {

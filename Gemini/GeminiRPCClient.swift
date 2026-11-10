@@ -121,7 +121,7 @@ public struct BardResponseParser: Sendable {
         return results
     }
 
-    public static func parseGenerateResponse(from responseString: String) throws -> (reply: String, context: ConversationContext) {
+    public static func parseGenerateResponse(from responseString: String) throws -> (reply: String, newContext: ConversationContext) {
         let payloads = try extractPayloads(from: responseString)
         
         for payload in payloads {
@@ -139,7 +139,7 @@ public struct BardResponseParser: Sendable {
             if let textParts = firstCandidate[safe: 1] as? [Any],
                let text = textParts[safe: 0] as? String, !text.isEmpty {
                 let context = ConversationContext(conversationId: convId, responseId: respId, choiceId: choiceId)
-                return (text, context)
+                return (reply: text, newContext: context)
             }
         }
 
@@ -278,7 +278,7 @@ public actor GeminiRPCClient {
     public func fetchChatHistory(limit: Int = 30) async throws -> [ChatThreadSummary] {
         try await ensureHandshake()
 
-        let payload: [Any] = [limit, 2, nil, 1]
+        let payload: [Any] = [limit, 2, NSNull(), 1]
         let rawResponse = try await sendBatchExecute(rpcId: "MaZiqc", payload: payload)
         return try BardResponseParser.parseChatHistory(from: rawResponse)
     }
@@ -286,7 +286,7 @@ public actor GeminiRPCClient {
     public func loadThreadMessages(conversationId: String) async throws -> ([ChatMessage], ConversationContext) {
         try await ensureHandshake()
 
-        let payload: [Any] = [conversationId, 25, nil, 1]
+        let payload: [Any] = [conversationId, 25, NSNull(), 1]
         let rawResponse = try await sendBatchExecute(rpcId: "hNvQHb", payload: payload)
         return try BardResponseParser.parseThreadDetails(from: rawResponse)
     }
