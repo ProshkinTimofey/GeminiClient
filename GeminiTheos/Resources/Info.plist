@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+    "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleDisplayName</key>
+    <string>Gemini</string>
+    <key>CFBundleExecutable</key>
+    <string>GeminiClient</string>
+    <key>CFBundleIdentifier</key>
+    <string>com.github.geminiclient</string>
+    <key>CFBundleName</key>
+    <string>GeminiClient</string>
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
+    <key>CFBundleShortVersionString</key>
+    <string>1.0</string>
+    <key>CFBundleVersion</key>
+    <string>1</string>
+    <key>CFBundleSignature</key>
+    <string>????</string>
+    <!-- iOS 3.0+: нет NSMainStoryboardFile, нет LaunchScreen.storyboard -->
+    <key>NSPrincipalClass</key>
+    <string>NSObject</string>
+    <!-- App Transport Security — разрешаем HTTP для прокси-режима (iOS 9+) -->
+    <key>NSAppTransportSecurity</key>
+    <dict>
+        <key>NSAllowsArbitraryLoads</key>
+        <true/>
+    </dict>
+    <!-- Минимальная версия iOS -->
+    <key>MinimumOSVersion</key>
+    <string>3.0</string>
+    <!-- Ориентации -->
+    <key>UISupportedInterfaceOrientations</key>
+    <array>
+        <string>UIInterfaceOrientationPortrait</string>
+        <string>UIInterfaceOrientationPortraitUpsideDown</string>
+    </array>
+    <key>UIRequiresFullScreen</key>
+    <true/>
+</dict>
+</plist>

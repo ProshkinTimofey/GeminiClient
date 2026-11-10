@@ -1,0 +1,92 @@
+name: Build Gemini Theos IPA (arm64, iOS 15+)
+
+on:
+  push:
+    branches: [ "main", "master" ]
+    paths:
+      - 'GeminiTheos/**'
+      - '.github/workflows/build_theos.yml'
+  workflow_dispatch:
+    inputs:
+      archs:
+        description: 'Target architectures (arm64 / armv7 / arm64 armv7)'
+        required: false
+        default: 'arm64'
+
+jobs:
+  build:
+    runs-on: macos-15
+    env:
+      # Theos установится сюда
+      THEOS: /opt/theos
+      # SDK для arm64 / iOS 15 (используем стандартный iphoneos из Xcode 16)
+      ARCHS: ${{ github.event.inputs.archs || 'arm64' }}
+
+    steps:
+      # ── 1. Checkout ────────────────────────────────────────────────────────
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      # ── 2. Установка Theos ─────────────────────────────────────────────────
+      - name: Install Theos
+        run: |
+          set -e
+          sudo mkdir -p /opt
+          sudo git clone --recursive https://github.com/theos/theos.git /opt/theos
+          # Скачиваем SDK-пакеты Theos (содержат iPhoneOS14.5.sdk, 15.4.sdk, ...)
+          curl -sL https://github.com/theos/sdks/archive/master.tar.gz | \
+            sudo tar -xz -C /opt/theos/sdks --strip-components=2 sdks-master/iPhoneOS15.4.sdk
+          echo "THEOS=/opt/theos" >> $GITHUB_ENV
+          echo "/opt/theos/bin" >> $GITHUB_PATH
+          # ldid — подписчик бинарей для jailbreak/TrollStore
+          brew install ldid 2>/dev/null || true
+
+      # ── 3. Проверяем тулчейн ───────────────────────────────────────────────
+      - name: Show toolchain info
+        run: |
+          xcodebuild -version
+          clang --version
+          make --version
+          ls /opt/theos/sdks/
+
+      # ── 4. Сборка Theos проекта ────────────────────────────────────────────
+      - name: Build with Theos (make package)
+        working-directory: GeminiTheos
+        run: |
+          set -e
+          make package \
+            ARCHS="${ARCHS}" \
+            THEOS_DEVICE_IP= \
+            TARGET="iphone:clang:15.4:9.0" \
+            FINALPACKAGE=1 \
+            2>&1
+
+      # ── 5. Упаковываем .ipa из staging директории ─────────────────────────
+      - name: Package .ipa from staged .app
+        working-directory: GeminiTheos
+        run: |
+          set -e
+          APP_PATH=$(find .theos -name "GeminiClient.app" -type d | head -1)
+          if [ -z "$APP_PATH" ]; then
+            echo "ERROR: GeminiClient.app not found in .theos staging!"
+            find .theos -type d | head -20
+            exit 1
+          fi
+          echo "Found app at: $APP_PATH"
+          mkdir -p Payload
+          cp -r "$APP_PATH" Payload/
+          zip -qr GeminiClient_Theos.ipa Payload/
+          echo "IPA size: $(du -sh GeminiClient_Theos.ipa)"
+
+      # ── 6. Загружаем артефакты ─────────────────────────────────────────────
+      - name: Upload IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: GeminiClient_Theos_arm64
+          path: GeminiTheos/GeminiClient_Theos.ipa
+
+      - name: Upload .deb
+        uses: actions/upload-artifact@v4
+        with:
+          name: GeminiClient_Theos_deb
+          path: GeminiTheos/packages/*.deb

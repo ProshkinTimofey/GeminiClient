@@ -1,0 +1,9 @@
+Package: com.github.geminiclient
+Name: Gemini Client
+Version: 1.0.0
+Architecture: iphoneos-arm64
+Description: Lightweight native Gemini AI client. Pure ObjC, MRC, iOS 3.0+ compatible code.
+Maintainer: Timofey Proshkin <proshkin@example.com>
+Author: Timofey Proshkin
+Section: Utilities
+Depends: firmware (>= 9.0)
