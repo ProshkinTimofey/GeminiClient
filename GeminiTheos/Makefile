@@ -29,6 +29,9 @@ GeminiClient_FILES := \
     src/main.m \
     src/AppDelegate.m \
     src/GeminiNetworkClient.m \
+    src/ChatMessageCell.m \
+    src/ChatViewController.m \
+    src/SettingsViewController.m \
     src/cJSON/cJSON.c
 
 # --- Фреймворки и библиотеки ---
