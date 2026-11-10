@@ -199,7 +199,7 @@ public final class KeychainAuthStore: @unchecked Sendable {
 public final class GeminiAuthSession: NSObject {
     
     private let customSafariUserAgent = "Mozilla/5.0 (iPhone; CPU iPhone OS 15_8 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/15.6.6 Mobile/15E148 Safari/604.1"
-    private let targetURL = URL(string: "https://accounts.google.com/ServiceLogin?service=bard&continue=https%3A%2F%2Fgemini.google.com%2Fapp")!
+    private let targetURL = URL(string: "https://accounts.google.com/ServiceLogin?continue=https%3A%2F%2Fgemini.google.com%2Fapp")!
 
     private let requiredCookieNames: Set<String> = [
         "SID", "HSID", "SSID", "__Secure-1PSID", "__Secure-3PSID"
