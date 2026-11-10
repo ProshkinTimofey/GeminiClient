@@ -244,7 +244,7 @@ public final class GeminiAuthSession: NSObject {
         let userContentController = WKUserContentController()
         let overlayFixScript = """
         (function() {
-            function removeOverlays() {
+            function removeOverlaysAndAutoSignIn() {
                 var selectors = [
                     '[role="dialog"]',
                     '.cdk-overlay-backdrop',
@@ -262,9 +262,19 @@ public final class GeminiAuthSession: NSObject {
                 });
                 document.body.style.overflow = 'auto';
                 document.documentElement.style.overflow = 'auto';
+
+                // Авто-клик по кнопке Войти, если открылся лендинг
+                var buttons = document.querySelectorAll('button, a');
+                for (var i = 0; i < buttons.length; i++) {
+                    var text = (buttons[i].innerText || buttons[i].textContent || '').trim().toLowerCase();
+                    if (text === 'войти' || text === 'sign in') {
+                        buttons[i].click();
+                        break;
+                    }
+                }
             }
-            window.addEventListener('DOMContentLoaded', removeOverlays);
-            setInterval(removeOverlays, 800);
+            window.addEventListener('DOMContentLoaded', removeOverlaysAndAutoSignIn);
+            setInterval(removeOverlaysAndAutoSignIn, 600);
         })();
         """
         let userScript = WKUserScript(source: overlayFixScript, injectionTime: .atDocumentEnd, forMainFrameOnly: false)
@@ -289,7 +299,7 @@ public final class GeminiAuthSession: NSObject {
         webView.translatesAutoresizingMaskIntoConstraints = false
         hostVC.view.addSubview(webView)
         NSLayoutConstraint.activate([
-            webView.topAnchor.constraint(equalTo: hostVC.view.topAnchor),
+            webView.topAnchor.constraint(equalTo: hostVC.view.safeAreaLayoutGuide.topAnchor),
             webView.bottomAnchor.constraint(equalTo: hostVC.view.bottomAnchor),
             webView.leadingAnchor.constraint(equalTo: hostVC.view.leadingAnchor),
             webView.trailingAnchor.constraint(equalTo: hostVC.view.trailingAnchor)
@@ -303,7 +313,16 @@ public final class GeminiAuthSession: NSObject {
         )
         hostVC.navigationItem.leftBarButtonItem = cancelButton
 
+        let appearance = UINavigationBarAppearance()
+        appearance.configureWithOpaqueBackground()
+        appearance.backgroundColor = UIColor(red: 24.0/255.0, green: 24.0/255.0, blue: 27.0/255.0, alpha: 1.0)
+        appearance.titleTextAttributes = [.foregroundColor: UIColor.white]
+
         let nav = UINavigationController(rootViewController: hostVC)
+        nav.navigationBar.standardAppearance = appearance
+        nav.navigationBar.scrollEdgeAppearance = appearance
+        nav.navigationBar.compactAppearance = appearance
+        nav.navigationBar.isTranslucent = false
         nav.modalPresentationStyle = .fullScreen
         nav.isModalInPresentation = true
         self.navigationController = nav
